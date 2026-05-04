@@ -122,7 +122,7 @@ STATIC_URL = 'static/'
 
 
 
-####### AUTH_USER_MODEL = 'users.User' # custom user model from the users app
+AUTH_USER_MODEL = 'users.User' # custom user model from the users app
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

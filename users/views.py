@@ -22,7 +22,7 @@ class UserSearchView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
 
-    def get_object(self):
+    def get_queryset(self):
         query = self.request.query_params.get('q', '')
         if not query:
             return User.objects.none()

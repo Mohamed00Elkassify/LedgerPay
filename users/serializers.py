@@ -20,6 +20,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             )
             # create the empty wallet simultaneously
             Wallet.objects.create(user=user)
+        return user
 
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:

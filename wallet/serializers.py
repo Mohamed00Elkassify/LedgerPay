@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from .models import Wallet, Transaction
 
@@ -16,12 +17,12 @@ class TransactionSerializer(serializers.ModelSerializer):
 
 class TransferInputSerializer(serializers.Serializer):
     receiver_name = serializers.CharField()
-    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0.01)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
     idempotency_key = serializers.CharField(required=False)
 
 class DepositInputSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=1.00)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('1.00'))
 
 class WithdrawalInputSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=5.00)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('5.00'))
     bank_account_id = serializers.CharField(max_length=255) # the id of the user's bank account where the money should be sent 

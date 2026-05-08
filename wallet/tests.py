@@ -1,10 +1,13 @@
 from decimal import Decimal
+from unittest.mock import patch, MagicMock
 from django.urls import reverse
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 from users.models import User
 from .models import Wallet, LedgerEntry, Transaction
 
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
 class WalletTests(APITestCase):
     def setUp(self):
         self.user1 = User.objects.create_user(username='user1', email='user1@example.com', password='password123')
@@ -115,3 +118,77 @@ class WalletTests(APITestCase):
         
         self.wallet1.refresh_from_db()
         self.assertEqual(self.wallet1.balance, Decimal('90.00')) # Only one transfer should have been processed
+
+    @patch('wallet.services.stripe.PaymentIntent.create')
+    def test_deposit_funds_success(self, mock_create):
+        """Test that users can initiate a deposit by creating a Stripe PaymentIntent."""
+        # Mock stripe response
+        mock_create.return_value = MagicMock(
+            id='pi_123',
+            client_secret='secret_123'
+        )
+        
+        self.client.force_authenticate(user=self.user1)
+        url = reverse('deposit-funds')
+        data = {'amount': '50.00'}
+        response = self.client.post(url, data)
+        
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['payment_intent_id'], 'pi_123')
+        self.assertEqual(response.data['client_secret'], 'secret_123')
+        
+        # Check if pending transaction is created in our DB
+        tx = Transaction.objects.get(idempotency_key='pi_123')
+        self.assertEqual(tx.status, Transaction.TransactionStatus.PENDING)
+        self.assertEqual(tx.amount, Decimal('50.00'))
+        self.assertEqual(tx.receiver, self.user1)
+
+    @patch('wallet.services.stripe.Webhook.construct_event')
+    def test_stripe_webhook_success(self, mock_construct):
+        """Test that the Stripe webhook correctly processes successful payments."""
+        # Pre-create a pending transaction
+        tx = Transaction.objects.create(
+            receiver=self.user1,
+            amount=Decimal('50.00'),
+            transaction_type=Transaction.TransactionType.DEPOSIT,
+            status=Transaction.TransactionStatus.PENDING,
+            idempotency_key='pi_123'
+        )
+        
+        # Mock stripe event payload
+        mock_construct.return_value = {
+            'type': 'payment_intent.succeeded',
+            'data': {
+                'object': {
+                    'id': 'pi_123'
+                }
+            }
+        }
+        
+        url = reverse('stripe-webhook')
+        # Simulate Stripe POST request
+        response = self.client.post(url, data={}, content_type='application/json', HTTP_STRIPE_SIGNATURE='fake_sig')
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        tx.refresh_from_db()
+        self.assertEqual(tx.status, Transaction.TransactionStatus.COMPLETED)
+        
+        self.wallet1.refresh_from_db()
+        # Initial 100 + 50 deposit = 150
+        self.assertEqual(self.wallet1.balance, Decimal('150.00'))
+        
+        # Verify LedgerEntry was created
+        self.assertTrue(LedgerEntry.objects.filter(transaction=tx, wallet=self.wallet1, amount=Decimal('50.00')).exists())
+
+    @patch('wallet.services.stripe.Webhook.construct_event')
+    def test_stripe_webhook_invalid_signature(self, mock_construct):
+        """Test that the webhook rejects invalid signatures."""
+        import stripe
+        mock_construct.side_effect = stripe.error.SignatureVerificationError("Invalid signature", "sig_header")
+        
+        url = reverse('stripe-webhook')
+        response = self.client.post(url, data={}, HTTP_STRIPE_SIGNATURE='invalid_sig')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid payment', str(response.data['error']))

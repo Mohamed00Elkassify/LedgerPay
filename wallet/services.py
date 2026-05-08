@@ -76,3 +76,61 @@ class WalletService:
         send_transfer_receipt.delay(tx.id)
 
         return tx
+
+    @staticmethod
+    def create_stripe_payment_intent(user, amount):
+        wallet = user.wallet
+        amount_cents = int(amount * 100)
+
+        intent = stripe.PaymentIntent.create(
+            amount=amount_cents,
+            currency=wallet.currency.lower(),
+            metadata={
+                'user_id': str(user.id),
+                'type': 'deposit'
+            }
+        )
+
+        # create a pending transaction
+        Transaction.objects.create(
+            receiver=user,
+            amount=amount,
+            transaction_type=Transaction.TransactionType.DEPOSIT,
+            status=Transaction.TransactionStatus.PENDING,
+            idempotency_key=intent.id #stripe intent id
+        )
+
+        return intent
+
+    @staticmethod
+    @transaction.atomic
+    def handle_stripe_webhook(payload, sig_header):
+        try:
+            event = stripe.Webhook.construct_event(
+                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            )
+        except (ValueError, stripe.error.SignatureVerificationError):
+            raise ValidationError("Invalid payment")
+        
+        if event['type'] == 'payment_intent.succeeded':
+            intent = event['data']['object']
+            tx = Transaction.objects.select_for_update().filter(
+                idempotency_key=intent['id'],
+                status=Transaction.TransactionStatus.PENDING
+            ).first()
+
+            if tx:
+                wallet = tx.receiver.wallet
+                # create ledger entry
+                LedgerEntry.objects.create(
+                    transaction=tx,
+                    wallet=wallet,
+                    amount=tx.amount
+                )
+
+                wallet.balance += tx.amount
+                wallet.save()
+
+                tx.status = Transaction.TransactionStatus.COMPLETED
+                tx.save()
+        return True

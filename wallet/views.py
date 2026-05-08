@@ -1,9 +1,9 @@
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Sum
-from .serializers import WalletSerializer, TransactionSerializer, TransferInputSerializer
+from .serializers import WalletSerializer, TransactionSerializer, TransferInputSerializer, DepositInputSerializer
 from .models import LedgerEntry
 from .services import WalletService
 
@@ -55,3 +55,44 @@ class TransferView(APIView):
         
         except Exception as e:
             return Response({"error" : str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class DepositView(APIView):
+    """
+    Endpoint: /api/funding/deposit/
+    Purpose: Create StripeIntent
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = DepositInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            intent = WalletService.create_stripe_payment_intent(
+                user = request.user,
+                amount = serializer.validated_data['amount']
+            )
+            return Response({
+                "client_secret": intent.client_secret,
+                "payment_intent_id": intent.id
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({"error" : str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class StripeWebhookView(APIView):
+    """
+    Endpoint: /api/webhooks/stripe/
+    Purpose: Stripe async success fallback
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        payload = request.body
+        sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
+
+        try:
+            WalletService.handle_stripe_webhook(payload, sig_header)
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error" : str(e)}, status=status.HTTP_400_BAD_REQUEST)
+

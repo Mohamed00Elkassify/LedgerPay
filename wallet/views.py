@@ -1,10 +1,12 @@
+from rest_framework import generics
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from .serializers import WalletSerializer, TransactionSerializer, TransferInputSerializer, DepositInputSerializer, WithdrawalInputSerializer
-from .models import LedgerEntry
+from .models import LedgerEntry, Transaction
 from .services import WalletService
 
 class WalletBalanceView(APIView):
@@ -32,6 +34,36 @@ class WalletBalanceView(APIView):
             "currency": wallet.currency,
             "wallet_id": wallet.id
         })
+
+class TransactionDetailView(generics.RetrieveAPIView):
+    """
+    Endpoint: /api/transactions/{id}/
+    Purpose: Get specific transaction details with object-level permission check
+    """
+    serializer_class = TransactionSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Transaction.objects.all()
+    lookup_field = 'id'
+
+    def get_object(self):
+        obj = super().get_object()
+        if obj.sender != self.request.user and obj.receiver != self.request.user:
+            raise PermissionDenied("You don't have permission to view this transaction")
+        return obj
+
+class TransactionHistoryView(generics.ListAPIView):
+    """
+    Endpoint: /api/wallet/history/
+    Purpose: List past transactions with pagination and optimization
+    """
+    serializer_class = TransactionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Transaction.objects.filter(
+            Q(sender=self.request.user) | Q(receiver=self.request.user)
+        ).select_related('sender', 'receiver').order_by('-created_at')
+
 
 class TransferView(APIView):
     """

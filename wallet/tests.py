@@ -230,3 +230,50 @@ class WalletTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Insufficient funds', str(response.data['error']))
+
+    def test_transaction_history_view(self):
+        """Test that users can see their own transactions (sent and received)."""
+        # Create an additional transaction where user1 is the receiver
+        Transaction.objects.create(
+            sender=self.user2,
+            receiver=self.user1,
+            amount=Decimal('20.00'),
+            transaction_type=Transaction.TransactionType.TRANSFER,
+            status=Transaction.TransactionStatus.COMPLETED
+        )
+        
+        self.client.force_authenticate(user=self.user1)
+        url = reverse('transaction-history')
+        response = self.client.get(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # user1 has: 1 initial deposit + 1 received transfer = 2 transactions
+        self.assertEqual(len(response.data['results']), 2)
+
+    def test_transaction_detail_view_owner(self):
+        """Test that a user can view details of a transaction they participated in."""
+        self.client.force_authenticate(user=self.user1)
+        url = reverse('transaction-detail', kwargs={'id': self.tx_init.id})
+        response = self.client.get(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['id'], str(self.tx_init.id))
+
+    def test_transaction_detail_view_unauthorized(self):
+        """Test that a user cannot view details of a transaction they didn't participate in."""
+        # Create a transaction between user2 and some other user
+        user3 = User.objects.create_user(username='user3', email='user3@example.com', password='password123')
+        tx_other = Transaction.objects.create(
+            sender=self.user2,
+            receiver=user3,
+            amount=Decimal('5.00'),
+            transaction_type=Transaction.TransactionType.TRANSFER,
+            status=Transaction.TransactionStatus.COMPLETED
+        )
+        
+        self.client.force_authenticate(user=self.user1)
+        url = reverse('transaction-detail', kwargs={'id': tx_other.id})
+        response = self.client.get(url)
+        
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("You don't have permission to view this transaction", str(response.data['detail']))

@@ -192,3 +192,41 @@ class WalletTests(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Invalid payment', str(response.data['error']))
+
+    @patch('wallet.tasks.time.sleep', return_value=None)
+    def test_withdrawal_funds_success(self, mock_sleep):
+        """Test that users can initiate a withdrawal and funds are reserved."""
+        self.client.force_authenticate(user=self.user1)
+        url = reverse('withdraw-funds')
+        data = {
+            'amount': '40.00',
+            'bank_account_id': 'bank_123'
+        }
+        response = self.client.post(url, data)
+        
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        
+        # Check wallet balance (should be deducted immediately)
+        self.wallet1.refresh_from_db()
+        self.assertEqual(self.wallet1.balance, Decimal('60.00')) # 100 - 40
+        
+        # Check transaction status (should be COMPLETED because Eager Mode runs task immediately)
+        tx = Transaction.objects.get(id=response.data['id'])
+        self.assertEqual(tx.status, Transaction.TransactionStatus.COMPLETED)
+        self.assertEqual(tx.transaction_type, Transaction.TransactionType.WITHDRAWAL)
+        
+        # Check LedgerEntry
+        self.assertTrue(LedgerEntry.objects.filter(transaction=tx, wallet=self.wallet1, amount=Decimal('-40.00')).exists())
+
+    def test_withdrawal_funds_insufficient_balance(self):
+        """Test that withdrawal fails if user has insufficient funds."""
+        self.client.force_authenticate(user=self.user1)
+        url = reverse('withdraw-funds')
+        data = {
+            'amount': '150.00',
+            'bank_account_id': 'bank_123'
+        }
+        response = self.client.post(url, data)
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Insufficient funds', str(response.data['error']))

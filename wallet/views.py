@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Sum
-from .serializers import WalletSerializer, TransactionSerializer, TransferInputSerializer, DepositInputSerializer
+from .serializers import WalletSerializer, TransactionSerializer, TransferInputSerializer, DepositInputSerializer, WithdrawalInputSerializer
 from .models import LedgerEntry
 from .services import WalletService
 
@@ -96,3 +96,24 @@ class StripeWebhookView(APIView):
         except Exception as e:
             return Response({"error" : str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+class WithdrawalView(APIView):
+    """
+    Endpoint: /api/wallet/withdraw/
+    Purpose: Initiate a bank payout
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = WithdrawalInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            tx = WalletService.initiate_withdrawal(
+                user=request.user,
+                amount=serializer.validated_data['amount'],
+                bank_account_id=serializer.validated_data['bank_account_id']
+            )
+            return Response(TransactionSerializer(tx).data, status=status.HTTP_202_ACCEPTED)
+        
+        except Exception as e:
+            return Response({"error" : str(e)}, status=status.HTTP_400_BAD_REQUEST)

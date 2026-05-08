@@ -4,7 +4,7 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 from users.models import User
 from .models import Wallet, Transaction, LedgerEntry
-from .tasks import send_transfer_receipt
+from .tasks import send_transfer_receipt, process_bank_withdrawal
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -134,3 +134,34 @@ class WalletService:
                 tx.status = Transaction.TransactionStatus.COMPLETED
                 tx.save()
         return True
+
+    @staticmethod
+    @transaction.atomic
+    def initiate_withdrawal(user, amount, bank_account_id):
+        wallet = Wallet.objects.select_for_update().get(user=user)
+    
+        if wallet.balance < amount:
+            raise ValidationError("Insufficient funds")
+        
+        # create Transaction
+        tx = Transaction.objects.create(
+            sender=user,
+            amount=amount,
+            transaction_type=Transaction.TransactionType.WITHDRAWAL,
+            status=Transaction.TransactionStatus.PENDING
+        )
+    
+        # Immediate DB deduction to "reserve" the funds
+        LedgerEntry.objects.create(
+            transaction=tx,
+            wallet = wallet,
+            amount = -amount 
+        )
+    
+        wallet.balance -= amount
+        wallet.save()
+    
+        # Trigger async back processing simulation
+        process_bank_withdrawal.delay(tx.id)
+    
+        return tx

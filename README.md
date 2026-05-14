@@ -32,6 +32,9 @@ The system is designed with a strong focus on financial integrity. Instead of re
 
 ## Technical Architecture
 
+![System Architecture](diagrams/system_architecture.png)
+
+
 ### Backend Stack
 - Django and Django REST Framework (DRF)
 - PostgreSQL (Production) / SQLite (Development/Testing)
@@ -46,6 +49,7 @@ The API is fully documented using the OpenAPI 3.0 specification.
 ### Key Service Components
 - WalletService: Centralized logic for all financial calculations and operations.
 - Stripe Integration: Secure payment intent creation and webhook handling.
+  ![Stripe Payment Flow](diagrams/stripe_flow.png)
 - Ledger System: Immutable record of fund movements tied to unique transaction IDs.
 
 ## API Endpoints
